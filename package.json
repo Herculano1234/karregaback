@@ -3,10 +3,12 @@
 	"name": "karrega-backend",
 	"version": "0.1.0",
 	"type": "module",
-	"scripts": {
-		"start": "node src/index.js",
-		"start:dev": "nodemon --watch src --exec node src/index.js"
-	},
+
+  "scripts": {
+  "dev": "vite",
+  "build": "vite build",
+  "preview": "vite preview"
+},
 	"dependencies": {
 		"cors": "^2.8.5",
 		"dotenv": "^16.3.1",
