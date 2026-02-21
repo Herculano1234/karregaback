@@ -147,6 +147,77 @@ app.get('/api/trips', async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
+// Listar todos os clientes
+app.get('/cliente', async (req, res) => {
+  try {
+    // Selecionamos apenas os campos necessários, excluindo a senha
+    const [rows] = await pool.query(
+      'SELECT id, nome, numero, numero_bi, created_at FROM clientes ORDER BY nome ASC'
+    );
+    
+    return res.json({
+      sucesso: true,
+      total: rows.length,
+      clientes: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar clientes:', err.message);
+    return res.status(500).json({ error: 'Erro ao buscar clientes no servidor' });
+  }
+});
+
+// Listar apenas viagens do tipo 'agendado'
+app.get('/agendamento', async (req, res) => {
+  try {
+    const sql = `
+      SELECT 
+        v.id, 
+        v.tipo, 
+        v.status, 
+        v.scheduled_at, 
+        c.nome AS cliente_nome, 
+        c.numero AS cliente_contato,
+        t.nome AS transportador_nome 
+      FROM viagens v
+      LEFT JOIN clientes c ON v.cliente_id = c.id
+      LEFT JOIN transportadores t ON v.transportador_id = t.id
+      WHERE v.tipo = 'agendado'
+      ORDER BY v.scheduled_at ASC
+    `;
+
+    const [rows] = await pool.query(sql);
+
+    return res.json({
+      sucesso: true,
+      total: rows.length,
+      agendamentos: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar agendamentos:', err.message);
+    return res.status(500).json({ error: 'Erro ao buscar agendamentos no servidor' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // --- FINALIZAÇÃO ---
 
 // EXPORTAÇÃO OBRIGATÓRIA PARA VERCEL
