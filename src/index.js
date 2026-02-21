@@ -38,6 +38,10 @@ app.post('/api/register/client', async (req, res) => {
     return res.json({ ok: true, id: resInsert.insertId });
   } catch (err) {
     console.error(err);
+    // Tratamento de duplicate key na coluna `numero`
+    if (err && err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Número já registado' });
+    }
     return res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -55,6 +59,26 @@ app.post('/api/register/driver', async (req, res) => {
     );
 
     return res.json({ ok: true, id: resInsert.insertId });
+  } catch (err) {
+    console.error(err);
+    if (err && err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Número já registado' });
+    }
+    return res.status(500).json({ error: 'Erro no servidor' });
+  }
+});
+
+// Login client - autenticação simples por `numero` + `numero_bi`
+app.post('/api/login/client', async (req, res) => {
+  try {
+    const { numero, numero_bi } = req.body;
+    if (!numero || !numero_bi) return res.status(400).json({ error: 'Dados obrigatórios faltando' });
+
+    const [rows] = await pool.query('SELECT id, nome, numero, numero_bi, created_at FROM clientes WHERE numero = ? AND numero_bi = ? LIMIT 1', [numero, numero_bi]);
+    if (!rows || rows.length === 0) return res.status(401).json({ error: 'Credenciais inválidas' });
+
+    const user = rows[0];
+    return res.json({ ok: true, user });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro no servidor' });
