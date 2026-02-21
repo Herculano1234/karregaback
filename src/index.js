@@ -26,6 +26,9 @@ const pool = mysql.createPool({
   ssl: { rejectUnauthorized: false },
 });
 
+// Corrigir __dirname (pois em ES Modules ele não existe direto)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 async function initDatabase() {
   try {
     // Sobe uma pasta (de /src para /)
@@ -222,8 +225,6 @@ app.patch('/api/trips/:id', async (req, res) => {
   }
 });
 
-// Exportação necessária para o Vercel
-export default app;
 
 // O Vercel gerencia o listen, mas mantemos para rodar local
 if (process.env.NODE_ENV !== 'production') {
