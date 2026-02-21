@@ -19,9 +19,12 @@ const pool = mysql.createPool({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  ssl: { rejectUnauthorized: false } // Geralmente necessário para bancos na nuvem
+  waitForConnections: true,
+  multipleStatements: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  ssl: { rejectUnauthorized: false },
 });
-
 // Health & Root
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/', (req, res) => res.send('Karrega backend is running (DB Storage Mode)'));
