@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
+import bcrypt from 'bcryptjs';
 
 dotenv.config();
 
@@ -28,12 +29,14 @@ app.get('/', (req, res) => res.send('Karrega backend is running (DB Storage Mode
 // Register client
 app.post('/api/register/client', async (req, res) => {
   try {
-    const { nome, numero, numero_bi } = req.body;
-    if (!nome || !numero || !numero_bi) return res.status(400).json({ error: 'Dados obrigatórios faltando' });
+    const { nome, numero, numero_bi, password } = req.body;
+    if (!nome || !numero || !numero_bi || !password) return res.status(400).json({ error: 'Dados obrigatórios faltando' });
+
+    const hashed = await bcrypt.hash(password, 10);
 
     const [resInsert] = await pool.query(
-      'INSERT INTO clientes (nome, numero, numero_bi) VALUES (?, ?, ?)',
-      [nome, numero, numero_bi]
+      'INSERT INTO clientes (nome, numero, numero_bi, password) VALUES (?, ?, ?, ?)',
+      [nome, numero, numero_bi, hashed]
     );
     return res.json({ ok: true, id: resInsert.insertId });
   } catch (err) {
@@ -49,13 +52,15 @@ app.post('/api/register/client', async (req, res) => {
 // Register transporter (Salvando imagem no DB)
 app.post('/api/register/driver', async (req, res) => {
   try {
-    const { nome, numero, numero_bi, foto_bi_base64 } = req.body;
-    if (!nome || !numero || !numero_bi) return res.status(400).json({ error: 'Dados obrigatórios faltando' });
+    const { nome, numero, numero_bi, foto_bi_base64, password } = req.body;
+    if (!nome || !numero || !numero_bi || !password) return res.status(400).json({ error: 'Dados obrigatórios faltando' });
 
-    // Salvamos a string Base64 diretamente no banco
+    const hashed = await bcrypt.hash(password, 10);
+
+    // Salvamos a string Base64 diretamente no banco (foto) e o hash da password
     const [resInsert] = await pool.query(
-      'INSERT INTO transportadores (nome, numero, numero_bi, foto_bi_path) VALUES (?, ?, ?, ?)',
-      [nome, numero, numero_bi, foto_bi_base64 || null]
+      'INSERT INTO transportadores (nome, numero, numero_bi, foto_bi_path, password) VALUES (?, ?, ?, ?, ?)',
+      [nome, numero, numero_bi, foto_bi_base64 || null, hashed]
     );
 
     return res.json({ ok: true, id: resInsert.insertId });
@@ -68,20 +73,41 @@ app.post('/api/register/driver', async (req, res) => {
   }
 });
 
-// Login client - autenticação simples por `numero` + `numero_bi`
+// Login client - autenticação por `numero` + `password` (hash)
 app.post('/api/login/client', async (req, res) => {
   try {
-    const { numero, numero_bi } = req.body;
-    if (!numero || !numero_bi) return res.status(400).json({ error: 'Dados obrigatórios faltando' });
+    const { numero, password } = req.body;
+    if (!numero || !password) return res.status(400).json({ error: 'Dados obrigatórios faltando' });
 
-    const [rows] = await pool.query('SELECT id, nome, numero, numero_bi, created_at FROM clientes WHERE numero = ? AND numero_bi = ? LIMIT 1', [numero, numero_bi]);
+    const [rows] = await pool.query('SELECT id, nome, numero, numero_bi, created_at, password FROM clientes WHERE numero = ? LIMIT 1', [numero]);
     if (!rows || rows.length === 0) return res.status(401).json({ error: 'Credenciais inválidas' });
 
     const user = rows[0];
-    return res.json({ ok: true, user });
+    const hash = user.password;
+    const ok = await bcrypt.compare(password, hash);
+    if (!ok) return res.status(401).json({ error: 'Credenciais inválidas' });
+
+    // Remover password do objeto retornado
+    const safeUser = { id: user.id, nome: user.nome, numero: user.numero, numero_bi: user.numero_bi, created_at: user.created_at };
+    return res.json({ ok: true, user: safeUser });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro no servidor' });
+  }
+});
+app.get("/tabelas", async (req, res) => {
+  try {
+    const query = `
+      SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+      ORDER BY TABLE_NAME, ORDINAL_POSITION;
+    `;
+    
+    const [rows] = await pool.query(query);
+    res.json(rows);
+  } catch (err) {
+    handleError(res, err);
   }
 });
 
