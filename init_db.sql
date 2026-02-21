@@ -30,21 +30,6 @@ CREATE TABLE IF NOT EXISTS planos (
 	descricao TEXT,
 	valor DECIMAL(12,2) NOT NULL
 );
-
--- Inserir taxas e planos iniciais (opcionais)
-INSERT INTO taxas (nome, valor) VALUES
-	('Taxa padrão', 5.00)
-ON DUPLICATE KEY UPDATE nome=nome;
-
-INSERT INTO planos (nome, descricao, valor) VALUES
-	('Básico', 'Pacote básico para iniciar', 0.00),
-	('Profissional', 'Pacote com prioridade e mais visibilidade', 29.90)
-ON DUPLICATE KEY UPDATE nome=nome;
-
--- Adicionar coluna `password` para clientes e transportadores (se não existir)
---ALTER TABLE clientes ADD COLUMN IF NOT EXISTS `password` VARCHAR(255) NULL;
---ALTER TABLE transportadores ADD COLUMN IF NOT EXISTS `password` VARCHAR(255) NULL;
-
 -- Criar tabela de viagens com relacionamentos e status/tipos
 CREATE TABLE IF NOT EXISTS viagens (
 	id INT AUTO_INCREMENT PRIMARY KEY,
@@ -61,3 +46,15 @@ CREATE TABLE IF NOT EXISTS viagens (
 	CONSTRAINT fk_viagens_cliente FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE ON UPDATE CASCADE,
 	CONSTRAINT fk_viagens_transportador FOREIGN KEY (transportador_id) REFERENCES transportadores(id) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- Inserir taxas e planos iniciais (opcionais)
+INSERT INTO taxas (nome, valor) VALUES
+	('Taxa padrão', 5.00)
+ON DUPLICATE KEY UPDATE nome=nome;
+
+INSERT INTO planos (nome, descricao, valor) VALUES
+	('Básico', 'Pacote básico para iniciar', 0.00),
+	('Profissional', 'Pacote com prioridade e mais visibilidade', 29.90)
+ON DUPLICATE KEY UPDATE nome=nome;
+
