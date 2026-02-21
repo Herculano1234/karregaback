@@ -40,6 +40,7 @@ async function initDatabase() {
     console.error("❌ Erro ao inicializar o banco de dados:", err.message);
   }
 }
+await initDatabase();
 // Health & Root
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/', (req, res) => res.send('Karrega backend is running (DB Storage Mode)'));
