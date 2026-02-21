@@ -100,6 +100,3 @@ CREATE TABLE IF NOT EXISTS consultas (
     local VARCHAR(100),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
--- Adicionar coluna `password` para clientes e transportadores (se não existir)
-ALTER TABLE clientes ADD COLUMN IF NOT EXISTS `password` VARCHAR(255) NULL;
-ALTER TABLE transportadores ADD COLUMN IF NOT EXISTS `password` VARCHAR(255) NULL;

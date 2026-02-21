@@ -97,17 +97,12 @@ app.post('/api/login/client', async (req, res) => {
 });
 app.get("/tabelas", async (req, res) => {
   try {
-    const query = `
-      SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-      FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE()
-      ORDER BY TABLE_NAME, ORDINAL_POSITION;
-    `;
-    
-    const [rows] = await pool.query(query);
+    const { rows } = await pool.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+    );
     res.json(rows);
   } catch (err) {
-    handleError(res, err);
+    res.status(500).json({ error: "Erro ao listar tabelas", detalhes: err.message });
   }
 });
 
