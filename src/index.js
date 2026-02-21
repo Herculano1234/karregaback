@@ -115,14 +115,25 @@ app.post('/api/login/client', async (req, res) => {
 });
 app.get("/tabelas", async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-    );
-    res.json(rows);
+    const [rows] = await pool.query("SHOW TABLES");
+    
+    // Extrai o nome das tabelas (a chave depende do nome do banco)
+    const tabelas = rows.map(row => Object.values(row)[0]);
+    
+    res.json({
+      sucesso: true,
+      total: tabelas.length,
+      tabelas
+    });
   } catch (err) {
-    res.status(500).json({ error: "Erro ao listar tabelas", detalhes: err.message });
+    console.error("Erro ao listar tabelas:", err.message);
+    res.status(500).json({
+      sucesso: false,
+      erro: "Erro ao listar tabelas do banco de dados."
+    });
   }
 });
+
 
 // Create a trip
 app.post('/api/trips', async (req, res) => {
