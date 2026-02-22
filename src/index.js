@@ -341,11 +341,18 @@ app.post('/api/agendamentos', async (req, res) => {
 
 app.get('/api/agendamentos', async (req, res) => {
   try {
-    // list only tipo = 'agendado'
-    const [rows] = await pool.query(`SELECT v.*, c.nome AS cliente_nome, t.nome AS transportador_nome FROM viagens v
+    // list only tipo = 'agendado', optionally filter by tipo_de_transporte
+    const { tipo_de_transporte } = req.query;
+    let whereClause = "WHERE v.tipo = 'agendado'";
+    const params = [];
+    if (tipo_de_transporte) {
+      whereClause += " AND v.tipo_de_transporte = ?";
+      params.push(tipo_de_transporte);
+    }
+    const [rows] = await pool.query(`SELECT v.*, c.nome AS cliente_nome, c.numero AS cliente_numero, t.nome AS transportador_nome, t.numero AS transportador_numero FROM viagens v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       LEFT JOIN transportadores t ON v.transportador_id = t.id
-      WHERE v.tipo = 'agendado' ORDER BY v.scheduled_at ASC`);
+      ${whereClause} ORDER BY v.scheduled_at ASC`, params);
     return res.json({ sucesso: true, total: rows.length, agendamentos: rows });
   } catch (err) {
     console.error('Erro listar agendamentos:', err);
