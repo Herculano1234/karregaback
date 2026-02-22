@@ -145,7 +145,7 @@ app.get("/tabelas", async (req, res) => {
 // Trips (Create, List, Get, Update) - Mantidas conforme sua lógica
 app.post('/api/trips', async (req, res) => {
   try {
-    let { cliente_id, cliente_numero, transportador_id, tipo, scheduled_at, status, origin, destination, descricao_da_carga, tamanho_carga } = req.body;
+    let { cliente_id, cliente_numero, transportador_id, tipo, scheduled_at, status, origin, destination, descricao_da_carga, tamanho_carga, tipo_de_transporte } = req.body;
 
     // Resolve cliente_id from numero if provided
     if (!cliente_id && cliente_numero) {
@@ -158,10 +158,12 @@ app.post('/api/trips', async (req, res) => {
     // Ensure tipo is set; default to 'na hora' for quick requests
     tipo = tipo || 'na hora';
     const tripStatus = status || 'pendente';
+    // Default to 'ligeiro' if not specified
+    tipo_de_transporte = tipo_de_transporte || 'ligeiro';
 
     const [result] = await pool.query(
-      'INSERT INTO viagens (cliente_id, transportador_id, status, tipo, scheduled_at, origin, destination, descricao_da_carga, tamanho_carga) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [cliente_id, transportador_id || null, tripStatus, tipo, scheduled_at || null, origin || null, destination || null, descricao_da_carga || null, tamanho_carga || null]
+      'INSERT INTO viagens (cliente_id, transportador_id, status, tipo, scheduled_at, origin, destination, descricao_da_carga, tamanho_carga, tipo_de_transporte) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [cliente_id, transportador_id || null, tripStatus, tipo, scheduled_at || null, origin || null, destination || null, descricao_da_carga || null, tamanho_carga || null, tipo_de_transporte]
     );
     return res.status(201).json({ ok: true, id: result.insertId });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -271,20 +273,23 @@ app.post('/api/trips/:id/start', async (req, res) => {
   } catch (err) { console.error('Erro iniciar viagem:', err); return res.status(500).json({ error: 'Erro no servidor' }); }
 });
 
-// Requests endpoint: list realtime 'na hora' pending requests (for drivers)
+// Requests endpoint: list realtime 'na hora' pending requests (for drivers), filtered by vehicle type
 app.get('/api/requests', async (req, res) => {
   try {
-    // optional filter: transportador_id to exclude requests already assigned
-    const { transportador_id } = req.query;
-    let sql = `SELECT v.id, v.tipo, v.status, v.origin, v.destination, v.created_at, c.id AS cliente_id, c.nome AS cliente_nome, c.numero AS cliente_numero
+    const { tipo_de_transporte } = req.query;
+    let sql = `SELECT v.id, v.tipo, v.status, v.origin, v.destination, v.tamanho_carga, v.descricao_da_carga, v.tipo_de_transporte, v.created_at, 
+               c.id AS cliente_id, c.nome AS cliente_nome, c.numero AS cliente_numero
                FROM viagens v
                LEFT JOIN clientes c ON v.cliente_id = c.id
                WHERE v.tipo = 'na hora' AND v.status = 'pendente'`;
     const params = [];
-    if (transportador_id) {
-      // If transportador_id provided, still return unassigned pending requests
-      // (business logic can be extended to filter by proximity/vehicle type)
+    
+    // Filter by vehicle type if provided
+    if (tipo_de_transporte) {
+      sql += ' AND v.tipo_de_transporte = ?';
+      params.push(tipo_de_transporte);
     }
+    
     const [rows] = await pool.query(sql, params);
     return res.json({ sucesso: true, total: rows.length, requests: rows });
   } catch (err) {
@@ -506,6 +511,7 @@ app.get('/cliente', async (req, res) => {
     return res.status(500).json({ error: 'Erro ao buscar clientes no servidor' });
   }
 });
+
 
 // Listar apenas viagens do tipo 'agendado'
 app.get('/agendamento', async (req, res) => {
