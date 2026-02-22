@@ -242,8 +242,32 @@ app.post('/api/trips/:id/start', async (req, res) => {
     if (transportador_id && viagem.transportador_id !== parseInt(transportador_id, 10)) return res.status(403).json({ error: 'Transportador não autorizado a iniciar esta viagem' });
 
     const now = new Date();
-    await pool.query("UPDATE viagens SET status = 'em_transito', started_at = ? WHERE id = ?", [now, tripId]);
-    return res.json({ sucesso: true, started_at: now });
+    try {
+      await pool.query("UPDATE viagens SET status = 'em_transito', started_at = ? WHERE id = ?", [now, tripId]);
+    } catch (sqlErr) {
+      console.error('Erro ao atualizar status started_at:', sqlErr);
+      // If enum value 'em_transito' is not allowed in the current DB schema, try to at least set started_at
+      try {
+        await pool.query("UPDATE viagens SET started_at = ? WHERE id = ?", [now, tripId]);
+        // proceed and return partial success
+        const [rows] = await pool.query('SELECT * FROM viagens WHERE id = ? LIMIT 1', [tripId]);
+        return res.json({ sucesso: true, partial: true, message: 'started_at gravado, mas não foi possível alterar status (ver logs)', started_at: now, trip: rows[0] });
+      } catch (e2) {
+        console.error('Erro ao gravar started_at fallback:', e2);
+        return res.status(500).json({ error: 'Erro ao iniciar viagem', details: e2.message || e2 });
+      }
+    }
+
+    // Return updated trip so clients can refresh immediately
+    const [updated] = await pool.query(
+      `SELECT v.*, c.nome AS cliente_nome, c.numero AS cliente_numero, t.nome AS transportador_nome, t.numero AS transportador_numero
+       FROM viagens v
+       LEFT JOIN clientes c ON v.cliente_id = c.id
+       LEFT JOIN transportadores t ON v.transportador_id = t.id
+       WHERE v.id = ? LIMIT 1`,
+      [tripId]
+    );
+    return res.json({ sucesso: true, started_at: now, trip: updated[0] });
   } catch (err) { console.error('Erro iniciar viagem:', err); return res.status(500).json({ error: 'Erro no servidor' }); }
 });
 
