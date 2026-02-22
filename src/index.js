@@ -46,6 +46,7 @@ async function initDatabase() {
       await pool.query(sql);
       console.log("✅ Banco de dados sincronizado.");
     }
+    
   } catch (err) {
     console.error("❌ Alerta Banco:", err.message);
     // Não damos throw aqui para o servidor não crashar na Vercel
@@ -169,7 +170,7 @@ app.post('/api/trips', async (req, res) => {
 app.get('/api/trips', async (req, res) => {
   try {
     const { cliente_id, transportador_id } = req.query;
-    let sql = `SELECT v.*, c.nome AS cliente_nome, t.nome AS transportador_nome FROM viagens v 
+    let sql = `SELECT v.*, c.nome AS cliente_nome, c.numero AS cliente_numero, t.nome AS transportador_nome, t.numero AS transportador_numero FROM viagens v 
                LEFT JOIN clientes c ON v.cliente_id = c.id 
                LEFT JOIN transportadores t ON v.transportador_id = t.id`;
     const params = [];
@@ -177,6 +178,73 @@ app.get('/api/trips', async (req, res) => {
     const [rows] = await pool.query(sql, params);
     return res.json(rows);
   } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// Get single trip with client and driver contact details
+app.get('/api/trips/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const [rows] = await pool.query(
+      `SELECT v.*, c.nome AS cliente_nome, c.numero AS cliente_numero, t.nome AS transportador_nome, t.numero AS transportador_numero
+       FROM viagens v
+       LEFT JOIN clientes c ON v.cliente_id = c.id
+       LEFT JOIN transportadores t ON v.transportador_id = t.id
+       WHERE v.id = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows || rows.length === 0) return res.status(404).json({ error: 'Viagem não encontrada' });
+    return res.json(rows[0]);
+  } catch (err) { console.error('Erro get trip:', err); return res.status(500).json({ error: 'Erro no servidor' }); }
+});
+
+// Driver accepts a pending 'na hora' request
+app.post('/api/trips/:id/accept', async (req, res) => {
+  try {
+    const tripId = req.params.id;
+    const { transportador_id } = req.body;
+    if (!transportador_id) return res.status(400).json({ error: 'transportador_id é obrigatório' });
+
+    // Only accept if currently pending and unassigned
+    const [result] = await pool.query(
+      "UPDATE viagens SET transportador_id = ?, status = 'aceito' WHERE id = ? AND status = 'pendente'",
+      [transportador_id, tripId]
+    );
+    if (result.affectedRows === 0) return res.status(400).json({ error: 'Viagem não está pendente ou já foi atribuída' });
+    // return updated trip
+    const [rows] = await pool.query('SELECT id, status, transportador_id FROM viagens WHERE id = ? LIMIT 1', [tripId]);
+    return res.json({ sucesso: true, trip: rows[0] });
+  } catch (err) { console.error('Erro accept trip:', err); return res.status(500).json({ error: 'Erro no servidor' }); }
+});
+
+// Driver cancels (rescind) an accepted assignment or client cancels
+app.post('/api/trips/:id/cancel', async (req, res) => {
+  try {
+    const tripId = req.params.id;
+    const { by } = req.body; // optional reason/source
+    const [result] = await pool.query("UPDATE viagens SET status = 'cancelado' WHERE id = ? AND status <> 'feito'", [tripId]);
+    if (result.affectedRows === 0) return res.status(400).json({ error: 'Não foi possível cancelar a viagem' });
+    return res.json({ sucesso: true });
+  } catch (err) { console.error('Erro cancelar viagem:', err); return res.status(500).json({ error: 'Erro no servidor' }); }
+});
+
+// Start the trip: set started_at and move to 'em_transito'
+app.post('/api/trips/:id/start', async (req, res) => {
+  try {
+    const tripId = req.params.id;
+    // Optionally validate transportador_id matches (to prevent others starting)
+    const { transportador_id } = req.body;
+
+    // Check current status
+    const [vrows] = await pool.query('SELECT status, transportador_id FROM viagens WHERE id = ? LIMIT 1', [tripId]);
+    if (!vrows || vrows.length === 0) return res.status(404).json({ error: 'Viagem não encontrada' });
+    const viagem = vrows[0];
+    if (viagem.status !== 'aceito') return res.status(400).json({ error: 'Viagem deve estar em estado aceito para iniciar' });
+    if (transportador_id && viagem.transportador_id !== parseInt(transportador_id, 10)) return res.status(403).json({ error: 'Transportador não autorizado a iniciar esta viagem' });
+
+    const now = new Date();
+    await pool.query("UPDATE viagens SET status = 'em_transito', started_at = ? WHERE id = ?", [now, tripId]);
+    return res.json({ sucesso: true, started_at: now });
+  } catch (err) { console.error('Erro iniciar viagem:', err); return res.status(500).json({ error: 'Erro no servidor' }); }
 });
 
 // Requests endpoint: list realtime 'na hora' pending requests (for drivers)
