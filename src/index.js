@@ -44,6 +44,14 @@ async function initDatabase() {
       const sql = fs.readFileSync(sqlPath, "utf8");
       console.log("🟢 Inicializando o banco de dados...");
       await pool.query(sql);
+      
+      try {
+        await pool.query("ALTER TABLE viagens ADD COLUMN valor DECIMAL(12,2) DEFAULT 5000.00");
+        console.log("✅ Coluna 'valor' adicionada à tabela 'viagens'.");
+      } catch (_) {
+        // Ignora se a coluna já existe
+      }
+      
       console.log("✅ Banco de dados sincronizado.");
     }
     
@@ -60,6 +68,20 @@ initDatabase();
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/', (req, res) => res.send('Karrega backend is running (DB Storage Mode)'));
+
+app.get('/api/configuracoes/preco-inicial', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT valor FROM valor_inicial ORDER BY id DESC LIMIT 1');
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'Configuração de preço inicial não encontrada' });
+    }
+
+    return res.json({ valor: Number(rows[0].valor) });
+  } catch (err) {
+    console.error('Erro ao buscar preço inicial:', err);
+    return res.status(500).json({ error: 'Erro no servidor' });
+  }
+});
 
 // Register client
 app.post('/api/register/client', async (req, res) => {
@@ -145,7 +167,7 @@ app.get("/tabelas", async (req, res) => {
 // Trips (Create, List, Get, Update) - Mantidas conforme sua lógica
 app.post('/api/trips', async (req, res) => {
   try {
-    let { cliente_id, cliente_numero, transportador_id, tipo, scheduled_at, status, origin, destination, descricao_da_carga, tamanho_carga, tipo_de_transporte } = req.body;
+    let { cliente_id, cliente_numero, transportador_id, tipo, scheduled_at, status, origin, destination, descricao_da_carga, tamanho_carga, tipo_de_transporte, valor } = req.body;
 
     // Resolve cliente_id from numero if provided
     if (!cliente_id && cliente_numero) {
@@ -162,8 +184,8 @@ app.post('/api/trips', async (req, res) => {
     tipo_de_transporte = tipo_de_transporte || 'ligeiro';
 
     const [result] = await pool.query(
-      'INSERT INTO viagens (cliente_id, transportador_id, status, tipo, scheduled_at, origin, destination, descricao_da_carga, tamanho_carga, tipo_de_transporte) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [cliente_id, transportador_id || null, tripStatus, tipo, scheduled_at || null, origin || null, destination || null, descricao_da_carga || null, tamanho_carga || null, tipo_de_transporte]
+      'INSERT INTO viagens (cliente_id, transportador_id, status, tipo, scheduled_at, origin, destination, descricao_da_carga, tamanho_carga, tipo_de_transporte, valor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [cliente_id, transportador_id || null, tripStatus, tipo, scheduled_at || null, origin || null, destination || null, descricao_da_carga || null, tamanho_carga || null, tipo_de_transporte, valor || 5000.00]
     );
     return res.status(201).json({ ok: true, id: result.insertId });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -171,12 +193,26 @@ app.post('/api/trips', async (req, res) => {
 
 app.get('/api/trips', async (req, res) => {
   try {
-    const { cliente_id, transportador_id } = req.query;
+    const { cliente_id, transportador_id, transportador_numero } = req.query;
     let sql = `SELECT v.*, c.nome AS cliente_nome, c.numero AS cliente_numero, t.nome AS transportador_nome, t.numero AS transportador_numero FROM viagens v 
                LEFT JOIN clientes c ON v.cliente_id = c.id 
                LEFT JOIN transportadores t ON v.transportador_id = t.id`;
     const params = [];
-    if (cliente_id) { sql += ' WHERE v.cliente_id = ?'; params.push(cliente_id); }
+    
+    if (cliente_id) { 
+      sql += ' WHERE v.cliente_id = ?'; 
+      params.push(cliente_id); 
+    } else if (transportador_id) {
+      sql += ' WHERE v.transportador_id = ?';
+      params.push(transportador_id);
+    } else if (transportador_numero) {
+      sql += ' WHERE v.transportador_numero = ?';
+      params.push(transportador_numero);
+    } else {
+      // Se nenhum filtro especificado, exclude viagens canceladas sem transportador
+      sql += ` WHERE v.status != 'cancelado' OR v.transportador_id IS NOT NULL`;
+    }
+    
     const [rows] = await pool.query(sql, params);
     return res.json(rows);
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -199,6 +235,64 @@ app.get('/api/trips/:id', async (req, res) => {
   } catch (err) { console.error('Erro get trip:', err); return res.status(500).json({ error: 'Erro no servidor' }); }
 });
 
+// List proposals for a trip
+app.get('/api/trips/:id/proposals', async (req, res) => {
+  try {
+    const tripId = req.params.id;
+    const [rows] = await pool.query(`
+      SELECT p.*, t.nome AS transportador_nome, t.numero AS transportador_numero
+      FROM propostas p
+      LEFT JOIN transportadores t ON p.transportador_id = t.id
+      WHERE p.viagem_id = ?
+      ORDER BY p.created_at DESC`, [tripId]);
+    return res.json({ sucesso: true, propostas: rows });
+  } catch (err) {
+    console.error('Erro listar propostas:', err);
+    return res.status(500).json({ error: 'Erro no servidor' });
+  }
+});
+
+// Create or update a proposal for a trip
+app.post('/api/trips/:id/proposals', async (req, res) => {
+  try {
+    const tripId = req.params.id;
+    const { transportador_id, valor_proposto, status } = req.body;
+    if (!transportador_id) return res.status(400).json({ error: 'transportador_id é obrigatório' });
+    if (!valor_proposto && valor_proposto !== 0) return res.status(400).json({ error: 'valor_proposto é obrigatório' });
+
+    const proposalStatus = status || 'pendente';
+    const [existingRows] = await pool.query(
+      'SELECT id FROM propostas WHERE viagem_id = ? AND transportador_id = ? LIMIT 1',
+      [tripId, transportador_id]
+    );
+
+    let proposalId;
+    if (existingRows && existingRows.length > 0) {
+      proposalId = existingRows[0].id;
+      await pool.query(
+        'UPDATE propostas SET valor_proposto = ?, status = ? WHERE id = ?',
+        [valor_proposto, proposalStatus, proposalId]
+      );
+    } else {
+      const [result] = await pool.query(
+        'INSERT INTO propostas (viagem_id, transportador_id, valor_proposto, status) VALUES (?, ?, ?, ?)',
+        [tripId, transportador_id, valor_proposto, proposalStatus]
+      );
+      proposalId = result.insertId;
+    }
+
+    if (proposalStatus === 'aceito') {
+      await pool.query("UPDATE viagens SET transportador_id = ?, status = 'aceito', valor = ? WHERE id = ?", [transportador_id, valor_proposto, tripId]);
+      await pool.query("UPDATE propostas SET status = 'recusado' WHERE viagem_id = ? AND id <> ?", [tripId, proposalId]);
+    }
+
+    return res.status(201).json({ sucesso: true, id: proposalId });
+  } catch (err) {
+    console.error('Erro criar proposta:', err);
+    return res.status(500).json({ error: 'Erro no servidor' });
+  }
+});
+
 // Driver accepts a pending 'na hora' request
 app.post('/api/trips/:id/accept', async (req, res) => {
   try {
@@ -212,6 +306,10 @@ app.post('/api/trips/:id/accept', async (req, res) => {
       [transportador_id, tripId]
     );
     if (result.affectedRows === 0) return res.status(400).json({ error: 'Viagem não está pendente ou já foi atribuída' });
+    
+    // Atualiza propostas pendentes desta viagem para recusado
+    await pool.query("UPDATE propostas SET status = 'recusado' WHERE viagem_id = ?", [tripId]);
+
     // return updated trip
     const [rows] = await pool.query('SELECT id, status, transportador_id FROM viagens WHERE id = ? LIMIT 1', [tripId]);
     return res.json({ sucesso: true, trip: rows[0] });
@@ -277,7 +375,7 @@ app.post('/api/trips/:id/start', async (req, res) => {
 app.get('/api/requests', async (req, res) => {
   try {
     const { tipo_de_transporte } = req.query;
-    let sql = `SELECT v.id, v.tipo, v.status, v.origin, v.destination, v.tamanho_carga, v.descricao_da_carga, v.tipo_de_transporte, v.created_at, 
+    let sql = `SELECT v.id, v.tipo, v.status, v.origin, v.destination, v.tamanho_carga, v.descricao_da_carga, v.tipo_de_transporte, v.created_at, v.valor, 
                c.id AS cliente_id, c.nome AS cliente_nome, c.numero AS cliente_numero
                FROM viagens v
                LEFT JOIN clientes c ON v.cliente_id = c.id
@@ -295,6 +393,40 @@ app.get('/api/requests', async (req, res) => {
   } catch (err) {
     console.error('Erro listar requests:', err);
     return res.status(500).json({ error: 'Erro no servidor' });
+  }
+});
+
+// Endpoint para criar requests (sincronização offline e compatibilidade)
+app.post('/api/requests', async (req, res) => {
+  try {
+    let { title, origin, destination, created_at, cliente_id, cliente_numero } = req.body;
+
+    // Resolve cliente_id a partir do número de telefone se fornecido
+    if (!cliente_id && cliente_numero) {
+      const [crows] = await pool.query('SELECT id FROM clientes WHERE numero = ? LIMIT 1', [cliente_numero]);
+      if (crows && crows.length > 0) {
+        cliente_id = crows[0].id;
+      }
+    }
+
+    if (!cliente_id) {
+      // Tenta associar ao primeiro cliente registado se não houver ID/número
+      const [firstClient] = await pool.query('SELECT id FROM clientes LIMIT 1');
+      if (firstClient && firstClient.length > 0) {
+        cliente_id = firstClient[0].id;
+      } else {
+        return res.status(400).json({ error: 'cliente_id ou cliente_numero é obrigatório' });
+      }
+    }
+
+    const [result] = await pool.query(
+      "INSERT INTO viagens (cliente_id, status, tipo, origin, destination, descricao_da_carga, created_at) VALUES (?, 'pendente', 'na hora', ?, ?, ?, ?)",
+      [cliente_id, origin || null, destination || null, title || null, created_at || new Date()]
+    );
+    return res.status(201).json({ ok: true, id: result.insertId });
+  } catch (err) {
+    console.error('Erro ao criar request via POST:', err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
