@@ -257,7 +257,9 @@ app.get('/api/trips/:id/proposals', async (req, res) => {
       FROM propostas p
       LEFT JOIN transportadores t ON p.transportador_id = t.id
       WHERE p.viagem_id = ?
-      ORDER BY p.created_at DESC`, [tripId]);
+        AND p.created_at >= DATE_SUB(NOW(), INTERVAL 10 SECOND)
+      ORDER BY p.created_at DESC
+      LIMIT 6`, [tripId]);
     return res.json({ sucesso: true, propostas: rows });
   } catch (err) {
     console.error('Erro listar propostas:', err);
