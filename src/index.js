@@ -257,9 +257,9 @@ app.get('/api/trips/:id/proposals', async (req, res) => {
       FROM propostas p
       LEFT JOIN transportadores t ON p.transportador_id = t.id
       WHERE p.viagem_id = ?
-        AND p.created_at >= DATE_SUB(NOW(), INTERVAL 10 SECOND)
+        AND p.created_at >= DATE_SUB(NOW(), INTERVAL 30 SECOND)
       ORDER BY p.created_at DESC
-      LIMIT 6`, [tripId]);
+      LIMIT 30`, [tripId]);
     return res.json({ sucesso: true, propostas: rows });
   } catch (err) {
     console.error('Erro listar propostas:', err);
@@ -287,12 +287,12 @@ app.post('/api/trips/:id/proposals', async (req, res) => {
     if (existingRows && existingRows.length > 0) {
       proposalId = existingRows[0].id;
       await pool.query(
-        'UPDATE propostas SET valor_proposto = ?, status = ? WHERE id = ?',
+        'UPDATE propostas SET valor_proposto = ?, status = ?, created_at = NOW() WHERE id = ?',
         [valor_proposto, proposalStatus, proposalId]
       );
     } else {
       const [result] = await pool.query(
-        'INSERT INTO propostas (viagem_id, transportador_id, valor_proposto, status) VALUES (?, ?, ?, ?)',
+        'INSERT INTO propostas (viagem_id, transportador_id, valor_proposto, status, created_at) VALUES (?, ?, ?, ?, NOW())',
         [tripId, transportador_id, valor_proposto, proposalStatus]
       );
       proposalId = result.insertId;
@@ -360,6 +360,7 @@ app.post('/api/trips/:id/cancel', async (req, res) => {
     const { by } = req.body; // optional reason/source
     const [result] = await pool.query("UPDATE viagens SET status = 'cancelado' WHERE id = ? AND status <> 'feito'", [tripId]);
     if (result.affectedRows === 0) return res.status(400).json({ error: 'Não foi possível cancelar a viagem' });
+    await pool.query("UPDATE propostas SET status = 'cancelado' WHERE viagem_id = ? AND status IN ('pendente', 'aceito')", [tripId]);
     return res.json({ sucesso: true });
   } catch (err) { console.error('Erro cancelar viagem:', err); return res.status(500).json({ error: 'Erro no servidor' }); }
 });
