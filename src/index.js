@@ -183,9 +183,22 @@ app.post('/api/trips', async (req, res) => {
     // Default to 'ligeiro' if not specified
     tipo_de_transporte = tipo_de_transporte || 'ligeiro';
 
+    // Determine default valor: prefer provided `valor`, fallback to configured `valor_inicial` or hard default
+    let finalValor = 0;
+    if (valor || valor === 0) {
+      finalValor = Number(valor);
+    } else {
+      try {
+        const [vrows] = await pool.query('SELECT valor FROM valor_inicial ORDER BY id DESC LIMIT 1');
+        finalValor = (vrows && vrows.length) ? Number(vrows[0].valor) : 5000.00;
+      } catch (e) {
+        finalValor = 5000.00;
+      }
+    }
+
     const [result] = await pool.query(
       'INSERT INTO viagens (cliente_id, transportador_id, status, tipo, scheduled_at, origin, destination, descricao_da_carga, tamanho_carga, tipo_de_transporte, valor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [cliente_id, transportador_id || null, tripStatus, tipo, scheduled_at || null, origin || null, destination || null, descricao_da_carga || null, tamanho_carga || null, tipo_de_transporte, valor || 5000.00]
+      [cliente_id, transportador_id || null, tripStatus, tipo, scheduled_at || null, origin || null, destination || null, descricao_da_carga || null, tamanho_carga || null, tipo_de_transporte, finalValor]
     );
     return res.status(201).json({ ok: true, id: result.insertId });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -258,9 +271,11 @@ app.post('/api/trips/:id/proposals', async (req, res) => {
     const tripId = req.params.id;
     const { transportador_id, valor_proposto, status } = req.body;
     if (!transportador_id) return res.status(400).json({ error: 'transportador_id é obrigatório' });
-    if (!valor_proposto && valor_proposto !== 0) return res.status(400).json({ error: 'valor_proposto é obrigatório' });
+    if (valor_proposto === undefined || valor_proposto === null) return res.status(400).json({ error: 'valor_proposto é obrigatório' });
 
     const proposalStatus = status || 'pendente';
+    const valorNum = Number(valor_proposto);
+    if (Number.isNaN(valorNum)) return res.status(400).json({ error: 'valor_proposto inválido' });
     const [existingRows] = await pool.query(
       'SELECT id FROM propostas WHERE viagem_id = ? AND transportador_id = ? LIMIT 1',
       [tripId, transportador_id]
@@ -282,13 +297,33 @@ app.post('/api/trips/:id/proposals', async (req, res) => {
     }
 
     if (proposalStatus === 'aceito') {
-      await pool.query("UPDATE viagens SET transportador_id = ?, status = 'aceito', valor = ? WHERE id = ?", [transportador_id, valor_proposto, tripId]);
+      await pool.query("UPDATE viagens SET transportador_id = ?, status = 'aceito', valor = ? WHERE id = ?", [transportador_id, valorNum, tripId]);
       await pool.query("UPDATE propostas SET status = 'recusado' WHERE viagem_id = ? AND id <> ?", [tripId, proposalId]);
     }
 
-    return res.status(201).json({ sucesso: true, id: proposalId });
+    return res.status(201).json({ sucesso: true, id: proposalId, valor_proposto: valorNum, status: proposalStatus });
   } catch (err) {
     console.error('Erro criar proposta:', err);
+    return res.status(500).json({ error: 'Erro no servidor' });
+  }
+});
+
+// Update trip desired price (sent by client during negotiation)
+app.post('/api/trips/:id/price', async (req, res) => {
+  try {
+    const tripId = req.params.id;
+    const { valor } = req.body;
+    if (valor === undefined || valor === null) return res.status(400).json({ error: 'valor é obrigatório' });
+    const valorNum = Number(valor);
+    if (Number.isNaN(valorNum)) return res.status(400).json({ error: 'valor inválido' });
+
+    const [result] = await pool.query('UPDATE viagens SET valor = ? WHERE id = ?', [valorNum, tripId]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Viagem não encontrada' });
+
+    const [rows] = await pool.query('SELECT id, valor FROM viagens WHERE id = ? LIMIT 1', [tripId]);
+    return res.json({ sucesso: true, trip: rows[0] });
+  } catch (err) {
+    console.error('Erro atualizar preço da viagem:', err);
     return res.status(500).json({ error: 'Erro no servidor' });
   }
 });
@@ -375,11 +410,12 @@ app.post('/api/trips/:id/start', async (req, res) => {
 app.get('/api/requests', async (req, res) => {
   try {
     const { tipo_de_transporte } = req.query;
+    // Only include 'na hora' pending requests created within the last 24 hours, newest first
     let sql = `SELECT v.id, v.tipo, v.status, v.origin, v.destination, v.tamanho_carga, v.descricao_da_carga, v.tipo_de_transporte, v.created_at, v.valor, 
-               c.id AS cliente_id, c.nome AS cliente_nome, c.numero AS cliente_numero
-               FROM viagens v
-               LEFT JOIN clientes c ON v.cliente_id = c.id
-               WHERE v.tipo = 'na hora' AND v.status = 'pendente'`;
+           c.id AS cliente_id, c.nome AS cliente_nome, c.numero AS cliente_numero
+           FROM viagens v
+           LEFT JOIN clientes c ON v.cliente_id = c.id
+           WHERE v.tipo = 'na hora' AND v.status = 'pendente' AND v.created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)`;
     const params = [];
     
     // Filter by vehicle type if provided
@@ -388,6 +424,7 @@ app.get('/api/requests', async (req, res) => {
       params.push(tipo_de_transporte);
     }
     
+    sql += ' ORDER BY v.created_at DESC';
     const [rows] = await pool.query(sql, params);
     return res.json({ sucesso: true, total: rows.length, requests: rows });
   } catch (err) {
