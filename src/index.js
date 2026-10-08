@@ -8,6 +8,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import adminRoutes from "./admin.js"; // painel administrativo
+import { enviarWhatsApp, mensagem } from "./whatsapp.js";
 
 dotenv.config();
 
@@ -95,6 +96,7 @@ app.post('/api/register/client', async (req, res) => {
       'INSERT INTO clientes (nome, numero, numero_bi, password) VALUES (?, ?, ?, ?)',
       [nome, numero, numero_bi, hashed]
     );
+    await enviarWhatsApp(numero, mensagem('boasvindas_cliente', nome));
     return res.json({ ok: true, id: resInsert.insertId });
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Número já registado' });
@@ -113,6 +115,7 @@ app.post('/api/register/driver', async (req, res) => {
       'INSERT INTO transportadores (nome, numero, numero_bi, foto_bi_path, password) VALUES (?, ?, ?, ?, ?)',
       [nome, numero, numero_bi, foto_bi_base64 || null, hashed]
     );
+    await enviarWhatsApp(numero, mensagem('registo_cargueiro', nome));
     return res.json({ ok: true, id: resInsert.insertId });
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Número já registado' });
